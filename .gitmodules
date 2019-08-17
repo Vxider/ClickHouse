@@ -88,3 +88,6 @@
 [submodule "contrib/cppzmq"]
 	path = contrib/cppzmq
 	url = https://github.com/Vxider/cppzmq.git
+[submodule "contrib/libzmq"]
+	path = contrib/libzmq
+	url = https://github.com/zeromq/libzmq.git
