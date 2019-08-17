@@ -85,3 +85,6 @@
 [submodule "contrib/rapidjson"]
 	path = contrib/rapidjson
 	url = https://github.com/Tencent/rapidjson
+[submodule "contrib/cppzmq"]
+	path = contrib/cppzmq
+	url = https://github.com/Vxider/cppzmq.git
