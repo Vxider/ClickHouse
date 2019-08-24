@@ -86,11 +86,11 @@ StoragePtr StorageFactory::get(
 
             name = engine_def.name;
 
-            if (storage_def->settings && !endsWith(name, "MergeTree") && name != "Kafka" && name != "Join")
+            if (storage_def->settings && !endsWith(name, "MergeTree") && name != "Kafka" && name != "Socket" && name != "Join")
             {
                 throw Exception(
                     "Engine " + name + " doesn't support SETTINGS clause. "
-                    "Currently only the MergeTree family of engines, Kafka engine and Join engine support it",
+                    "Currently only the MergeTree family of engines, Kafka engine, Socket engine, and Join engine support it",
                     ErrorCodes::BAD_ARGUMENTS);
             }
 

@@ -43,6 +43,9 @@ void registerStorageMySQL(StorageFactory & factory);
 void registerStorageKafka(StorageFactory & factory);
 #endif
 
+#if USE_ZEROMQ
+void registerStorageSocket(StorageFactory & factory);
+#endif
 
 void registerStorages()
 {
@@ -81,6 +84,10 @@ void registerStorages()
 
     #if USE_RDKAFKA
     registerStorageKafka(factory);
+    #endif
+
+    #if USE_ZEROMQ
+    registerStorageSocket(factory);
     #endif
 }
 

@@ -145,6 +145,14 @@ if (USE_RDKAFKA)
     add_subdirectory (cppkafka-cmake)
 endif()
 
+if (USE_INTERNAL_ZEROMQ_LIBRARY)
+    #TODO: complete this 
+endif ()
+
+if (USE_ZEROMQ)
+    add_subdirectory (cppzmq-cmake)
+endif()
+
 if (ENABLE_ODBC AND USE_INTERNAL_ODBC_LIBRARY)
     add_subdirectory (unixodbc-cmake)
     add_library(ODBC::ODBC ALIAS ${ODBC_LIBRARIES})
