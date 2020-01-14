@@ -1,6 +1,9 @@
+#include <thread>
 #include <DataStreams/IBlockInputStream.h>
 #include <DataStreams/IBlockOutputStream.h>
 #include <DataStreams/copyData.h>
+#include <Common/ConcurrentBoundedQueue.h>
+#include <Common/ThreadPool.h>
 
 
 namespace DB
@@ -51,6 +54,74 @@ void copyDataImpl(IBlockInputStream & from, IBlockOutputStream & to, TCancelCall
 
 inline void doNothing(const Block &) {}
 
+
+void copyDataImpl(BlockInputStreams & froms, BlockOutputStreams & tos)
+{
+    if (froms.size() == tos.size())
+    {
+        std::vector<ThreadFromGlobalPool> threads;
+        threads.reserve(froms.size());
+        for (size_t i = 0; i < froms.size(); i++)
+        {
+            threads.emplace_back([from = froms.at(i), to = tos.at(i)]()
+            {
+                from->readPrefix();
+                to->writePrefix();
+                while (Block block = from->read())
+                    to->write(block);
+                from->readSuffix();
+                to->writeSuffix();
+            });
+        }
+        for (auto & thread : threads)
+            thread.join();
+    }
+    else
+    {
+        ConcurrentBoundedQueue<Block> queue(froms.size());
+        ThreadFromGlobalPool from_threads([&]()
+        {
+            std::vector<ThreadFromGlobalPool> from_threads_;
+            from_threads_.reserve(froms.size());
+            for (auto & from : froms)
+            {
+                from_threads_.emplace_back([&queue, from]()
+                {
+                    from->readPrefix();
+                    while (Block block = from->read())
+                        queue.push(block);
+                    from->readSuffix();
+                });
+            }
+            for (auto & thread : from_threads_)
+                thread.join();
+            for (size_t i = 0; i < tos.size(); i++)
+                queue.push({});
+        });
+        std::vector<ThreadFromGlobalPool> to_threads;
+        for (auto & to : tos)
+        {
+            to_threads.emplace_back([&queue, to]()
+            {
+                to->writePrefix();
+                Block block;
+                while (true)
+                {
+                    queue.pop(block);
+                    if (!block)
+                        break;
+                    to->write(block);
+                }
+                to->writeSuffix();
+            });
+        }
+
+        from_threads.join();
+        for (auto & thread : to_threads)
+            thread.join();
+    }
+}
+
 void copyData(IBlockInputStream & from, IBlockOutputStream & to, std::atomic<bool> * is_cancelled)
 {
     auto is_cancelled_pred = [is_cancelled] ()
@@ -61,6 +132,10 @@ void copyData(IBlockInputStream & from, IBlockOutputStream & to, std::atomic<boo
     copyDataImpl(from, to, is_cancelled_pred, doNothing);
 }
 
+void copyData(BlockInputStreams & froms, BlockOutputStreams & tos)
+{
+    copyDataImpl(froms, tos);
+}
 
 void copyData(IBlockInputStream & from, IBlockOutputStream & to, const std::function<bool()> & is_cancelled)
 {
