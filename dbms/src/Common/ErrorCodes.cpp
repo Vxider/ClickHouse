@@ -480,6 +480,8 @@ namespace ErrorCodes
     extern const int CANNOT_DELETE_DIRECTORY = 505;
     extern const int UNEXPECTED_ERROR_CODE = 506;
 
+    extern const int QUERY_IS_NOT_SUPPORTED_IN_WINDOW_VIEW = 666;
+
     extern const int KEEPER_EXCEPTION = 999;
     extern const int POCO_EXCEPTION = 1000;
     extern const int STD_EXCEPTION = 1001;

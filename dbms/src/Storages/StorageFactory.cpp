@@ -67,6 +67,14 @@ StoragePtr StorageFactory::get(
 
         name = "LiveView";
     }
+    else if (query.is_window_view)
+    {
+
+        if (query.storage)
+            throw Exception("Specifying ENGINE is not allowed for a WindowView", ErrorCodes::INCORRECT_QUERY);
+
+        name = "WindowView";
+    }
     else
     {
         /// Check for some special types, that are not allowed to be stored in tables. Example: NULL data type.
@@ -127,6 +135,12 @@ StoragePtr StorageFactory::get(
             {
                 throw Exception(
                     "Direct creation of tables with ENGINE LiveView is not supported, use CREATE LIVE VIEW statement",
+                    ErrorCodes::INCORRECT_QUERY);
+            }
+            else if (name == "WindowView")
+            {
+                throw Exception(
+                    "Direct creation of tables with ENGINE WindowView is not supported, use CREATE WINDOW VIEW statement",
                     ErrorCodes::INCORRECT_QUERY);
             }
         }
