@@ -100,6 +100,84 @@ struct ToStartOfTransform;
     TRANSFORM_TIME(Second)
 #undef TRANSFORM_DATE
 
+    // template <IntervalKind::Kind unit>
+    template <typename FromType, typename ToType, IntervalKind::Kind unit>
+    struct ToWindowId;
+
+    template <typename FromType, typename ToType> 
+    struct ToWindowId<FromType, ToType, IntervalKind::Second> 
+    { 
+        static ToType execute(FromType f, UInt64 num_units, const DateLUTImpl & /*time_zone*/) 
+        {
+            return f / num_units;
+        }
+    };
+
+    template <typename FromType, typename ToType> 
+    struct ToWindowId<FromType, ToType, IntervalKind::Minute> 
+    { 
+        static ToType execute(FromType f, UInt64 num_units, const DateLUTImpl & /*time_zone*/) 
+        {
+            return f / num_units / 60;
+        }
+    };
+
+    template <typename FromType, typename ToType> 
+    struct ToWindowId<FromType, ToType, IntervalKind::Hour> 
+    { 
+        static ToType execute(FromType f, UInt64 num_units, const DateLUTImpl & /*time_zone*/) 
+        {
+            return f / num_units / 3600;
+        }
+    };
+
+    template <typename FromType, typename ToType> 
+    struct ToWindowId<FromType, ToType, IntervalKind::Day> 
+    { 
+        static ToType execute(FromType f, UInt64 num_units, const DateLUTImpl & /*time_zone*/) 
+        {
+            return (f + 28800) / num_units / 86400;
+        }
+    };
+
+    template <typename FromType, typename ToType> 
+    struct ToWindowId<FromType, ToType, IntervalKind::Week> 
+    { 
+        static ToType execute(FromType f, UInt64 num_units, const DateLUTImpl & /*time_zone*/) 
+        {
+            return (f - 4) / num_units / 7;
+        }
+    };
+
+    template <typename FromType, typename ToType> 
+    struct ToWindowId<FromType, ToType, IntervalKind::Month> 
+    { 
+        static ToType execute(FromType f, UInt64 num_units, const DateLUTImpl & time_zone) 
+        {
+            return ((time_zone.toYear(f) - DATE_LUT_MIN_YEAR) * 12 + time_zone.toMonth(f) - 1) / num_units;
+        }
+    };
+
+    template <typename FromType, typename ToType> 
+    struct ToWindowId<FromType, ToType, IntervalKind::Quarter> 
+    { 
+        static ToType execute(FromType f, UInt64 num_units, const DateLUTImpl & time_zone) 
+        {
+            std::cout << "\033[31mAAAAAAAAAAAAAAAA IntervalKind::Quarter: "
+                      << ((time_zone.toYear(f) - DATE_LUT_MIN_YEAR) * 12 + time_zone.toMonth(f) - 1) % (num_units*3) << "\033[39m" << std::endl;
+            return ((time_zone.toYear(f) - DATE_LUT_MIN_YEAR) * 12 + time_zone.toMonth(f) - 1) / (num_units * 3);
+        }
+    };
+
+    template <typename FromType, typename ToType> 
+    struct ToWindowId<FromType, ToType, IntervalKind::Year> 
+    { 
+        static ToType execute(FromType f, UInt64 num_units, const DateLUTImpl & time_zone) 
+        {
+            return ((time_zone.toYear(f) - DATE_LUT_MIN_YEAR)) / num_units;
+        }
+    };
+
     template <IntervalKind::Kind unit>
     struct AddTime;
 
@@ -193,8 +271,8 @@ namespace
                     + ". Should be an interval of time",
                 ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);
         interval_kind = interval_type->getKind();
-        result_type_is_date = (interval_type->getKind() == IntervalKind::Year) || (interval_type->getKind() == IntervalKind::Quarter)
-            || (interval_type->getKind() == IntervalKind::Month) || (interval_type->getKind() == IntervalKind::Week);
+        result_type_is_date = (interval_kind == IntervalKind::Year) || (interval_kind == IntervalKind::Quarter)
+            || (interval_kind == IntervalKind::Month) || (interval_kind == IntervalKind::Week);
     }
 
     void checkIntervalArgument(const ColumnWithTypeAndName & argument, const String & function_name, bool & result_type_is_date)
@@ -557,6 +635,10 @@ namespace
                 checkFirstArgument(arguments.at(0), function_name);
                 checkIntervalArgument(arguments.at(1), function_name, interval_kind_1, result_type_is_date);
                 checkIntervalArgument(arguments.at(2), function_name, interval_kind_2, result_type_is_date);
+                if (interval_kind_1 != interval_kind_2)
+                    throw Exception(
+                        "Illegal type of window and hop column of function " + function_name + ", must be same",
+                        ErrorCodes::ILLEGAL_COLUMN);
                 checkTimeZoneArgument(arguments.at(3), function_name);
             }
             else
@@ -567,10 +649,36 @@ namespace
                     ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH);
             }
 
-            if (result_type_is_date)
-                return std::make_shared<DataTypeUInt16>();
+            switch (interval_kind_1)
+            {
+                case IntervalKind::Second:
+                case IntervalKind::Minute:
+                case IntervalKind::Hour:
+                case IntervalKind::Day:
+                    return std::make_shared<DataTypeUInt32>();
+                case IntervalKind::Week:
+                case IntervalKind::Month:
+                case IntervalKind::Quarter:
+                    return std::make_shared<DataTypeUInt16>();
+                case IntervalKind::Year:
+                    return std::make_shared<DataTypeUInt8>();
+            }
+            __builtin_unreachable();
+        }
+
+        [[maybe_unused]] static ColumnPtr
+        dispatchForColumns(Block & block, const ColumnNumbers & arguments, const String & function_name)
+        {
+            if (arguments.size() == 2)
+                return dispatchForTumbleColumns(block, arguments, function_name);
             else
-                return std::make_shared<DataTypeUInt32>();
+            {
+                const auto & third_column = block.getByPosition(arguments[2]);
+                if (arguments.size() == 3 && WhichDataType(third_column.type).isString())
+                    return dispatchForTumbleColumns(block, arguments, function_name);
+                else
+                    return dispatchForHopColumns(block, arguments, function_name);
+            }
         }
 
         [[maybe_unused]] static ColumnPtr
@@ -660,23 +768,55 @@ namespace
         [[maybe_unused]] static ColumnPtr
         dispatchForTumbleColumns(Block & block, const ColumnNumbers & arguments, const String & function_name)
         {
-            ColumnPtr column = WindowImpl<TUMBLE>::dispatchForColumns(block, arguments, function_name);
-            return executeWindowBound(column, 1, function_name);
+            const auto & time_column = block.getByPosition(arguments[0]);
+            const auto & interval_column = block.getByPosition(arguments[1]);
+            const auto & from_datatype = *time_column.type.get();
+            const auto which_type = WhichDataType(from_datatype);
+            const auto * time_column_vec = checkAndGetColumn<ColumnUInt32>(time_column.column.get());
+            const DateLUTImpl & time_zone = extractTimeZoneFromFunctionArguments(block, arguments, 2, 0);
+            if (!which_type.isDateTime() || !time_column_vec)
+                throw Exception(
+                    "Illegal column " + time_column.name + " of function " + function_name + ". Must contain dates or dates with time",
+                    ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);
+
+            auto interval = dispatchForIntervalColumns(interval_column, function_name);
+
+            switch (std::get<0>(interval))
+            {
+                case IntervalKind::Second:
+                    return execute_tumble<UInt32, UInt32, IntervalKind::Second>(*time_column_vec, std::get<1>(interval), time_zone);
+                case IntervalKind::Minute:
+                    return execute_tumble<UInt32, UInt32, IntervalKind::Minute>(*time_column_vec, std::get<1>(interval), time_zone);
+                case IntervalKind::Hour:
+                    return execute_tumble<UInt32, UInt32, IntervalKind::Hour>(*time_column_vec, std::get<1>(interval), time_zone);
+                case IntervalKind::Day:
+                    return execute_tumble<UInt32, UInt32, IntervalKind::Day>(*time_column_vec, std::get<1>(interval), time_zone);
+                case IntervalKind::Week:
+                    return execute_tumble<DayNum, UInt16, IntervalKind::Week>(*time_column_vec, std::get<1>(interval), time_zone);
+                case IntervalKind::Month:
+                    return execute_tumble<DayNum, UInt16, IntervalKind::Month>(*time_column_vec, std::get<1>(interval), time_zone);
+                case IntervalKind::Quarter:
+                    return execute_tumble<DayNum, UInt16, IntervalKind::Quarter>(*time_column_vec, std::get<1>(interval), time_zone);
+                case IntervalKind::Year:
+                    return execute_tumble<DayNum, UInt8, IntervalKind::Year>(*time_column_vec, std::get<1>(interval), time_zone);
+            }
+            __builtin_unreachable();
         }
 
-        [[maybe_unused]] static ColumnPtr
-        dispatchForColumns(Block & block, const ColumnNumbers & arguments, const String & function_name)
+        template <typename ToType, typename ResType, IntervalKind::Kind unit>
+        static ColumnPtr execute_tumble(const ColumnUInt32 & time_column, UInt64 num_units, const DateLUTImpl & time_zone)
         {
-            if (arguments.size() == 2)
-                return dispatchForTumbleColumns(block, arguments, function_name);
-            else
+            const auto & time_data = time_column.getData();
+            size_t size = time_column.size();
+            auto res = ColumnVector<ResType>::create();
+            auto & res_data = res->getData();
+            res_data.resize(size);
+            for (size_t i = 0; i != size; ++i)
             {
-                const auto & third_column = block.getByPosition(arguments[2]);
-                if (arguments.size() == 3 && WhichDataType(third_column.type).isString())
-                    return dispatchForTumbleColumns(block, arguments, function_name);
-                else
-                    return dispatchForHopColumns(block, arguments, function_name);
+                ToType w_start = ToStartOfTransform<unit>::execute(time_data[i], num_units, time_zone);
+                res_data[i] = ToWindowId<ToType, ResType, unit>::execute(w_start, num_units, time_zone);
             }
+            return res;
         }
     };
 
